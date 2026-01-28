@@ -1,7 +1,6 @@
 'use client';
 
 import { Star, StarHalf, ShieldCheck } from 'lucide-react';
-import Image from 'next/image';
 import type { HomepageContent } from '@/lib/api/homepage';
 
 interface TrustSectionProps {
@@ -42,13 +41,11 @@ export default function TrustSection({ content }: TrustSectionProps) {
                     >
                         {/* Duplicate list for seamless scrolling */}
                         {[...PARTNER_LOGOS, ...PARTNER_LOGOS].map((logo, index) => (
-                            <div key={index} className="flex-shrink-0 relative h-14 w-40 flex items-center justify-center">
-                                <Image
+                            <div key={index} className="flex-shrink-0 h-14 w-40 flex items-center justify-center">
+                                <img
                                     src={logo}
                                     alt={`Partner ${index}`}
-                                    fill
-                                    className="object-contain grayscale opacity-70 hover:grayscale-0 hover:opacity-100 transition-all duration-300"
-                                    sizes="96px"
+                                    className="object-contain grayscale opacity-70 hover:grayscale-0 hover:opacity-100 transition-all duration-300 max-h-full max-w-full"
                                 />
                             </div>
                         ))}
