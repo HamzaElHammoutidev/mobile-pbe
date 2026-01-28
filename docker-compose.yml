@@ -1,0 +1,39 @@
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pbe-frontend
+    user: root
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_STRAPI_URL: http://localhost:1337
+      NEXT_PUBLIC_ENABLE_BOOKINGS: "false"
+      NEXT_PUBLIC_ENABLE_CAREERS: "true"
+    volumes:
+      - ./src:/app/src:delegated
+      - ./public:/app/public:delegated
+      - ./.next:/app/.next
+      - ./tsconfig.json:/app/tsconfig.json:ro
+      - ./next.config.ts:/app/next.config.ts:ro
+      - ./postcss.config.mjs:/app/postcss.config.mjs:ro
+      - ./tailwind.config.ts:/app/tailwind.config.ts:ro
+      - ./package.json:/app/package.json:ro
+      - ./eslint.config.mjs:/app/eslint.config.mjs:ro
+    command: npm run dev
+    networks:
+      - pbe-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+networks:
+  pbe-network:
+    driver: bridge

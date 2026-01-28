@@ -1,0 +1,223 @@
+name: Deploy to Staging
+
+on:
+  workflow_run:
+    workflows: ["Preview Build and Push"]
+    types:
+      - completed
+    branches: ['**']
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  deploy-staging:
+    name: Deploy to Staging Environment
+    runs-on: ubuntu-latest
+    # Only run if the preview workflow succeeded
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    permissions:
+      contents: read
+      deployments: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Extract deployment info
+        id: deployment-info
+        run: |
+          # Get branch name from workflow run
+          BRANCH_RAW="${{ github.event.workflow_run.head_branch }}"
+          BRANCH_SLUG=$(echo "$BRANCH_RAW" | tr '/' '-' | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//')
+
+          # Generate preview URL
+          PREVIEW_URL="https://preview-${BRANCH_SLUG}-${{ github.event.workflow_run.id }}.staging.parebriseexpress.ma"
+
+          # Image reference
+          COMMIT_SHA="${{ github.event.workflow_run.head_sha }}"
+          IMAGE_FULL="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${COMMIT_SHA}"
+
+          # Container name for this deployment
+          CONTAINER_NAME="pbe-preview-${BRANCH_SLUG}-${{ github.event.workflow_run.id }}"
+
+          # Export outputs
+          echo "preview-url=${PREVIEW_URL}" >> $GITHUB_OUTPUT
+          echo "image-full=${IMAGE_FULL}" >> $GITHUB_OUTPUT
+          echo "container-name=${CONTAINER_NAME}" >> $GITHUB_OUTPUT
+          echo "commit-sha=${COMMIT_SHA}" >> $GITHUB_OUTPUT
+
+          echo "Deployment Info:"
+          echo "  Preview URL: ${PREVIEW_URL}"
+          echo "  Image: ${IMAGE_FULL}"
+          echo "  Container: ${CONTAINER_NAME}"
+
+      - name: Create GitHub Deployment
+        id: create-deployment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const deployment = await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: '${{ github.event.workflow_run.head_sha }}',
+              environment: 'staging',
+              description: 'Deploy to staging preview environment',
+              required_contexts: [],
+              auto_merge: false,
+              production_environment: false
+            });
+            return deployment.data.id;
+
+      # PHASE 2 SIMPLIFIED APPROACH: Manual deployment verification
+      # The Docker image is built and pushed (preview.yml), but actual deployment
+      # to staging VM is manual for now. This allows infrastructure validation
+      # before adding SSH automation complexity.
+      #
+      # FUTURE (Phase 4+): Uncomment the deploy-to-vm job below and configure:
+      # - STAGING_SSH_KEY: Private key for staging VM
+      # - STAGING_HOST: VM hostname/IP
+      # - STAGING_USER: SSH user (e.g., 'deploy')
+      # - NGINX config for preview-*.staging.* routing
+
+      - name: Log deployment instructions (Manual verification for Phase 2)
+        run: |
+          echo "=========================================="
+          echo "DEPLOYMENT READY - MANUAL VERIFICATION"
+          echo "=========================================="
+          echo ""
+          echo "Docker image built and pushed to registry:"
+          echo "  Image: ${{ steps.deployment-info.outputs.image-full }}"
+          echo ""
+          echo "To deploy manually on staging VM:"
+          echo ""
+          echo "1. SSH to staging server:"
+          echo "   ssh deploy@staging.parebriseexpress.ma"
+          echo ""
+          echo "2. Pull the Docker image:"
+          echo "   docker pull ${{ steps.deployment-info.outputs.image-full }}"
+          echo ""
+          echo "3. Stop and remove old container (if exists):"
+          echo "   docker stop ${{ steps.deployment-info.outputs.container-name }} 2>/dev/null || true"
+          echo "   docker rm ${{ steps.deployment-info.outputs.container-name }} 2>/dev/null || true"
+          echo ""
+          echo "4. Run new container:"
+          echo "   docker run -d \\"
+          echo "     --name ${{ steps.deployment-info.outputs.container-name }} \\"
+          echo "     -p [available-port]:3000 \\"
+          echo "     -e NODE_ENV=production \\"
+          echo "     -e NEXT_TELEMETRY_DISABLED=1 \\"
+          echo "     --restart unless-stopped \\"
+          echo "     ${{ steps.deployment-info.outputs.image-full }}"
+          echo ""
+          echo "5. Configure nginx reverse proxy:"
+          echo "   Add upstream and server block for:"
+          echo "   ${{ steps.deployment-info.outputs.preview-url }}"
+          echo ""
+          echo "6. Test health:"
+          echo "   curl -I ${{ steps.deployment-info.outputs.preview-url }}"
+          echo ""
+          echo "=========================================="
+          echo ""
+          echo "Preview URL: ${{ steps.deployment-info.outputs.preview-url }}"
+          echo "Container: ${{ steps.deployment-info.outputs.container-name }}"
+          echo ""
+
+      - name: Update deployment status (Pending manual verification)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const deploymentId = ${{ steps.create-deployment.outputs.result }};
+            const previewUrl = '${{ steps.deployment-info.outputs.preview-url }}';
+
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: deploymentId,
+              state: 'pending',
+              description: 'Awaiting manual deployment to staging VM',
+              environment_url: previewUrl,
+              log_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+            });
+
+  # FUTURE: Automated deployment to staging VM
+  # Uncomment and configure when ready for full automation (Phase 4+)
+  #
+  # deploy-to-vm:
+  #   name: Deploy to Staging VM via SSH
+  #   runs-on: ubuntu-latest
+  #   needs: deploy-staging
+  #   steps:
+  #     - name: Deploy to staging VM
+  #       uses: appleboy/ssh-action@v1.0.0
+  #       with:
+  #         host: ${{ secrets.STAGING_HOST }}
+  #         username: ${{ secrets.STAGING_USER }}
+  #         key: ${{ secrets.STAGING_SSH_KEY }}
+  #         script: |
+  #           # Login to registry
+  #           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+  #
+  #           # Pull image
+  #           docker pull ${{ needs.deploy-staging.outputs.image-full }}
+  #
+  #           # Stop old container
+  #           docker stop ${{ needs.deploy-staging.outputs.container-name }} || true
+  #           docker rm ${{ needs.deploy-staging.outputs.container-name }} || true
+  #
+  #           # Start new container
+  #           docker run -d \
+  #             --name ${{ needs.deploy-staging.outputs.container-name }} \
+  #             -p ${DYNAMIC_PORT}:3000 \
+  #             -e NODE_ENV=production \
+  #             --restart unless-stopped \
+  #             ${{ needs.deploy-staging.outputs.image-full }}
+  #
+  #           # Health check
+  #           sleep 5
+  #           docker ps | grep ${{ needs.deploy-staging.outputs.container-name }}
+  #
+  #     - name: Configure nginx reverse proxy
+  #       uses: appleboy/ssh-action@v1.0.0
+  #       with:
+  #         host: ${{ secrets.STAGING_HOST }}
+  #         username: ${{ secrets.STAGING_USER }}
+  #         key: ${{ secrets.STAGING_SSH_KEY }}
+  #         script: |
+  #           # Add nginx config for this preview URL
+  #           # TODO: Implement dynamic nginx config generation
+  #           sudo nginx -s reload
+  #
+  #     - name: Health check preview URL
+  #       run: |
+  #         PREVIEW_URL="${{ needs.deploy-staging.outputs.preview-url }}"
+  #         RETRIES=30
+  #         DELAY=10
+  #
+  #         for i in $(seq 1 $RETRIES); do
+  #           echo "Health check attempt $i/$RETRIES..."
+  #           if curl -f -I "$PREVIEW_URL" > /dev/null 2>&1; then
+  #             echo "Health check passed!"
+  #             exit 0
+  #           fi
+  #           sleep $DELAY
+  #         done
+  #
+  #         echo "Health check failed after $RETRIES attempts"
+  #         exit 1
+  #
+  #     - name: Cleanup old deployments
+  #       uses: appleboy/ssh-action@v1.0.0
+  #       with:
+  #         host: ${{ secrets.STAGING_HOST }}
+  #         username: ${{ secrets.STAGING_USER }}
+  #         key: ${{ secrets.STAGING_SSH_KEY }}
+  #         script: |
+  #           # Keep last 10 preview deployments, remove older ones
+  #           docker ps -a --filter "name=pbe-preview-" --format "{{.Names}}" | \
+  #             tail -n +11 | \
+  #             xargs -r docker rm -f
