@@ -10,8 +10,17 @@ const nextConfig: NextConfig = {
         protocol: 'https',
         hostname: 'parebriseexpress.ma',
       },
+      {
+        protocol: 'https',
+        hostname: 'images.unsplash.com',
+      },
+      {
+        protocol: 'https',
+        hostname: '*.unsplash.com',
+      },
     ],
-    unoptimized: process.env.NODE_ENV === 'development',
+    // Disable image optimization for all external images to avoid 400 errors
+    unoptimized: true,
   },
 };
 
